@@ -1,12 +1,14 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState ,useRef} from "react";
 const radiansToDegrees = (radians: number) =>
   (radians * 180) / Math.PI;
 
 const degreesToRadians = (degrees: number) =>
   (degrees * Math.PI) / 180;
 import type { Scene } from "../types/scene";
+import type { SceneBehavior } from "../types/sceneBehavior";
 
+import { getSceneBehaviors } from "../services/sceneBehaviorService";
 import {
   Eye,
   EyeOff,
@@ -20,6 +22,7 @@ import {
 } from "lucide-react";
 import type { Asset } from "../types/asset";
 import { SceneViewport } from "./scene-editor/SceneViewport";
+import { BehaviorInspector } from "./scene-editor/BehaviorInspector";
 import {
   getAssets,
   getAssetUrl,
@@ -38,50 +41,160 @@ import {
   updateSceneObjectVisibility,
 } from "../services/sceneObjectService";
 
+
+
+
 function SceneObjectTree({
   objects,
   parentId,
   selectedObjectId,
   onSelectObject,
+  collapsedObjectIds,
+  onToggleCollapse,
+  searchQuery,
 }: {
   objects: SceneObject[];
   parentId: string | null;
   selectedObjectId: string | null;
   onSelectObject: (objectId: string) => void;
+  collapsedObjectIds: Set<string>;
+  onToggleCollapse: (objectId: string) => void;
+  searchQuery: string;
 }) {
+  const query = searchQuery.trim().toLowerCase();
+
+  // Cari objek yang namanya cocok dengan pencarian.
+  const matchingIds = new Set(
+    objects
+      .filter((object) =>
+        object.name.toLowerCase().includes(query),
+      )
+      .map((object) => object.id),
+  );
+
+  // Tambahkan semua parent dari objek yang cocok.
+  const visibleIds = new Set(matchingIds);
+
+  for (const object of objects) {
+    if (!visibleIds.has(object.id)) continue;
+
+    let currentParentId = object.parent_id;
+
+    while (currentParentId) {
+      visibleIds.add(currentParentId);
+
+      const parent = objects.find(
+        (item) => item.id === currentParentId,
+      );
+
+      currentParentId = parent?.parent_id ?? null;
+    }
+  }
+
   const children = objects.filter(
-    (object) => object.parent_id === parentId,
+    (object) =>
+      object.parent_id === parentId &&
+      (!query || visibleIds.has(object.id)),
   );
 
   return (
     <div className="space-y-1">
-      {children.map((object) => (
-       <div key={object.id}>
-  <button
-    type="button"
-    onClick={() => onSelectObject(object.id)}
-    className={`w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted ${
-      selectedObjectId === object.id
-        ? "bg-muted font-medium"
-        : ""
-    }`}
-  >
-    {object.name}
-  </button>
+      {children.map((object) => {
+        const hasChildren = objects.some(
+          (item) => item.parent_id === object.id,
+        );
 
-  <div className="ml-4 border-l pl-2">
-    <SceneObjectTree
-      objects={objects}
-      parentId={object.id}
-      selectedObjectId={selectedObjectId}
-      onSelectObject={onSelectObject}
-    />
-  </div>
-</div>
-      ))}
+        const isSelected = selectedObjectId === object.id;
+        const isCollapsed = collapsedObjectIds.has(object.id);
+
+        // Saat mencari, buka jalur ke hasil yang cocok
+        // tanpa mengubah state expand/collapse pengguna.
+        const hasMatchingDescendant = objects.some((item) => {
+          if (!matchingIds.has(item.id)) return false;
+
+          let currentParentId = item.parent_id;
+
+          while (currentParentId) {
+            if (currentParentId === object.id) return true;
+
+            const parent = objects.find(
+              (candidate) => candidate.id === currentParentId,
+            );
+
+            currentParentId = parent?.parent_id ?? null;
+          }
+
+          return false;
+        });
+
+        const showChildren =
+          hasChildren &&
+          (!isCollapsed || (query !== "" && hasMatchingDescendant));
+
+        return (
+          <div key={object.id} className="min-w-0">
+            <div
+              className={`flex min-w-0 items-center rounded-md border-l-2 transition-colors ${
+                isSelected
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
+            >
+              {hasChildren ? (
+                <button
+                  type="button"
+                  onClick={() => onToggleCollapse(object.id)}
+                  aria-label={
+                    isCollapsed
+                      ? `Expand ${object.name}`
+                      : `Collapse ${object.name}`
+                  }
+                  title={isCollapsed ? "Expand" : "Collapse"}
+                  className="flex shrink-0 items-center justify-center rounded p-1.5 hover:bg-muted"
+                >
+                  <span className="text-xs">
+                    {showChildren ? "▾" : "▸"}
+                  </span>
+                </button>
+              ) : (
+                <span className="w-7 shrink-0 text-center text-xs">
+                  •
+                </span>
+              )}
+
+              <button
+                type="button"
+                onClick={() => onSelectObject(object.id)}
+                title={object.name}
+                aria-current={isSelected ? "true" : undefined}
+                className={`min-w-0 flex-1 truncate px-1 py-1.5 text-left text-sm ${
+                  isSelected ? "font-medium" : ""
+                }`}
+              >
+                {object.name}
+              </button>
+            </div>
+
+            {showChildren && (
+              <div className="ml-3 border-l border-border/70 pl-2">
+                <SceneObjectTree
+                  objects={objects}
+                  parentId={object.id}
+                  selectedObjectId={selectedObjectId}
+                  onSelectObject={onSelectObject}
+                  collapsedObjectIds={collapsedObjectIds}
+                  onToggleCollapse={onToggleCollapse}
+                  searchQuery={searchQuery}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
+
 
 
 interface SceneEditorViewProps {
@@ -94,6 +207,23 @@ export function SceneEditorView({
 
 
 const [objects, setObjects] = useState<SceneObject[]>([]);
+const [sceneBehaviors, setSceneBehaviors] =
+  useState<SceneBehavior[]>([]);
+
+  const [previewAnimationCommand, setPreviewAnimationCommand] =
+  useState<{
+    id: number;
+    action: SceneBehavior["actions"][number];
+  } | null>(null);
+
+const previewCommandCounterRef = useRef(0);
+const [isPlayPreview, setIsPlayPreview] = useState(false);
+const [objectAnimationNames, setObjectAnimationNames] =
+  useState<Record<string, string[]>>({});
+  const [objectAnimationMetadata, setObjectAnimationMetadata] =
+  useState<
+    Record<string, { name: string; duration: number }[]>
+  >({});
 type TransformValues = {
   position_x: number;
   position_y: number;
@@ -131,6 +261,10 @@ const [assetId, setAssetId] = useState<string | null>(null);
 const [selectedObjectId, setSelectedObjectId] =
   useState<string | null>(null);
   
+const [collapsedObjectIds, setCollapsedObjectIds] = useState<Set<string>>(
+  () => new Set(),
+);
+const [objectSearch, setObjectSearch] = useState("");
 const [deletingObject, setDeletingObject] =
   useState(false);
   const selectedObject =
@@ -607,8 +741,70 @@ function handleResetSelectedObjectTransform() {
 
   setTransformMessage("");
 }
-// console.log("Selected object:", selectedObjectId);
-// console.log("Selected model URL:", selectedModelUrl);
+
+async function loadPreviewBehaviors() {
+  try {
+    const data = await getSceneBehaviors(scene.id);
+
+    setSceneBehaviors(data);
+
+    console.log(
+      "PLAY PREVIEW — BEHAVIORS LOADED:",
+      data,
+    );
+  } catch (error) {
+    console.error(
+      "PLAY PREVIEW — FAILED TO LOAD BEHAVIORS:",
+      error,
+    );
+
+    setSceneBehaviors([]);
+  }
+}
+function handlePreviewObjectTap(objectId: string) {
+  const tappedObject = objects.find(
+    (object) => object.id === objectId,
+  );
+
+  const matchingBehaviors = sceneBehaviors.filter(
+    (behavior) =>
+      behavior.object_id === objectId &&
+      behavior.trigger_type === "on_tap" &&
+      behavior.enabled,
+  );
+
+  console.log(
+    "PLAY PREVIEW — TAPPED OBJECT:",
+    tappedObject?.name,
+    objectId,
+  );
+
+  console.log(
+    "PLAY PREVIEW — MATCHING BEHAVIORS:",
+    matchingBehaviors,
+  );
+
+ for (const behavior of matchingBehaviors) {
+  console.log(
+    "PLAY PREVIEW — BEHAVIOR FOUND:",
+    behavior.name,
+    behavior.actions,
+  );
+
+  for (const action of behavior.actions) {
+    if (action.type !== "play_animation") {
+      continue;
+    }
+
+    previewCommandCounterRef.current += 1;
+
+    setPreviewAnimationCommand({
+      id: previewCommandCounterRef.current,
+      action,
+    });
+  }
+}
+}
   return (
     <div className="min-h-[calc(100vh-2rem)]">
       {/* Header */}
@@ -730,6 +926,17 @@ function handleResetSelectedObjectTransform() {
             </div>
 
    
+<div className="mt-3">
+  <input
+    type="text"
+    value={objectSearch}
+    onChange={(event) => setObjectSearch(event.target.value)}
+    placeholder="Search objects..."
+    aria-label="Search objects"
+    className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+  />
+</div>
+
 <div className="mt-4">
   {objects.length === 0 ? (
     <p className="text-sm text-muted-foreground">
@@ -737,12 +944,29 @@ function handleResetSelectedObjectTransform() {
     </p>
   ) : (
     <div className="max-h-[35vh] min-h-[120px] overflow-y-auto overflow-x-hidden rounded-md border p-2">
-      <SceneObjectTree
-        objects={objects}
-        parentId={null}
-        selectedObjectId={selectedObjectId}
-        onSelectObject={setSelectedObjectId}
-      />
+   
+<SceneObjectTree
+  objects={objects}
+  parentId={null}
+  selectedObjectId={selectedObjectId}
+  onSelectObject={setSelectedObjectId}
+  collapsedObjectIds={collapsedObjectIds}
+  searchQuery={objectSearch}
+  onToggleCollapse={(objectId) => {
+    setCollapsedObjectIds((current) => {
+      const next = new Set(current);
+
+      if (next.has(objectId)) {
+        next.delete(objectId);
+      } else {
+        next.add(objectId);
+      }
+
+      return next;
+    });
+  }}
+/>
+
     </div>
   )}
 </div>
@@ -750,10 +974,11 @@ function handleResetSelectedObjectTransform() {
           
 
 <div className="mt-4 border-t pt-4">
-  <div className="mb-2 flex items-center justify-between">
-    <span className="text-sm font-medium">
+      <span className="text-sm font-medium justify-center">
       Selected Object
     </span>
+
+  <div className="mb-2 flex items-center justify-between">
 
     <div className="flex items-center gap-1">
       <button
@@ -911,13 +1136,54 @@ function handleResetSelectedObjectTransform() {
           </div>
 
           <div className="h-[550px]">
+
+    <div className="mb-3 flex items-center gap-3">
+      <button
+        type="button"
+        onClick={() => {
+          if (!isPlayPreview) {
+            void loadPreviewBehaviors();
+          }
+
+          setIsPlayPreview((previous) => !previous);
+        }}
+        className={`rounded px-4 py-2 text-xs font-medium text-white ${
+          isPlayPreview
+            ? "bg-orange-600 hover:bg-orange-700"
+            : "bg-green-600 hover:bg-green-700"
+        }`}
+      >
+        {isPlayPreview ? "Stop Preview" : "Play Preview"}
+      </button>
+
+      <span className="text-xs text-gray-400">
+        {isPlayPreview
+          ? "Preview Mode — interactions enabled"
+          : "Edit Mode — editing enabled"}
+      </span>
+    </div>
+
 <SceneViewport
   objects={objects}
+    isPlayPreview={isPlayPreview}
   selectedObjectId={selectedObjectId}
   objectModelUrls={objectModelUrls}
   position={selectedObject ? position : undefined}
   rotation={selectedObject ? rotation : undefined}
+  previewAnimationCommand={previewAnimationCommand}
   scale={selectedObject ? scale : undefined}
+  onAnimationNamesChange={(objectId, names) => {
+  setObjectAnimationNames((previous) => ({
+    ...previous,
+    [objectId]: names,
+  }));
+}}
+onAnimationMetadataChange={(objectId, clips) => {
+  setObjectAnimationMetadata((previous) => ({
+    ...previous,
+    [objectId]: clips,
+  }));
+}}
  onPositionChange={(newPosition) => {
   setPosition(newPosition);
 
@@ -995,6 +1261,8 @@ onScaleChange={(newScale) => {
     },
   }));
 }}
+
+onObjectTap={handlePreviewObjectTap}
 />
         </div>
         </main>
@@ -1612,12 +1880,22 @@ onChange={(event) => {
                         : "Save Transform"}
                     </button>
 
-                    {transformMessage && (
+                                      {transformMessage && (
                       <p className="mt-2 text-xs text-muted-foreground">
                         {transformMessage}
                       </p>
                     )}
                   </div>
+
+                  {/* Behavior Inspector */}
+            <BehaviorInspector
+              key={selectedObject.id}
+              sceneId={scene.id}
+              objectId={selectedObject.id}
+              objects={objects}
+              objectAnimationNames={objectAnimationNames}
+              objectAnimationMetadata={objectAnimationMetadata}
+            />
             </>
           )}
         </div>
