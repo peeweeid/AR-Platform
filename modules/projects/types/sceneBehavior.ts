@@ -33,6 +33,12 @@ export interface BehaviorAction {
   // Asset audio atau konten lain.
   assetId?: string;
 
+  // Pengaturan loop khusus Play Audio.
+  audioLoopMode?: BehaviorLoopMode;
+
+  // Cegah Play Once bertumpuk saat audio masih aktif.
+preventOverlap?: boolean;
+
   // Konten modal.
   title?: string;
   description?: string;

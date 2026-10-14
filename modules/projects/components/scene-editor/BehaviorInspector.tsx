@@ -10,7 +10,8 @@ import type {
 } from "../../types/sceneBehavior";
 
 import type { SceneObject } from "../../types/sceneObject";
-
+import type { Asset } from "../../types/asset";
+import { getAssets } from "../../services/assetService";
 import {
   createSceneBehavior,
   deleteSceneBehavior,
@@ -33,6 +34,7 @@ const ACTION_OPTIONS: {
 ];
 
 interface BehaviorInspectorProps {
+  projectId: string;
   sceneId: string;
   objectId: string;
   objects: SceneObject[];
@@ -44,6 +46,7 @@ interface BehaviorInspectorProps {
 }
 
 export function BehaviorInspector({
+    projectId,
   sceneId,
   objectId,
   objects,
@@ -54,7 +57,46 @@ export function BehaviorInspector({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+const [audioAssets, setAudioAssets] = useState<Asset[]>([]);
+const [audioLoading, setAudioLoading] = useState(false);
+useEffect(() => {
+  let cancelled = false;
 
+  async function loadAudioAssets() {
+    setAudioLoading(true);
+    setAudioAssets([]);
+
+    try {
+      const assets = await getAssets(projectId);
+
+      if (!cancelled) {
+        setAudioAssets(
+          assets.filter(
+            (asset) => asset.asset_type === "audio",
+          ),
+        );
+      }
+    } catch (err) {
+      if (!cancelled) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load audio assets.",
+        );
+      }
+    } finally {
+      if (!cancelled) {
+        setAudioLoading(false);
+      }
+    }
+  }
+
+  void loadAudioAssets();
+
+  return () => {
+    cancelled = true;
+  };
+}, [projectId]);
   useEffect(() => {
     let cancelled = false;
 
@@ -501,6 +543,175 @@ async function updateAction(
           </option>
         ))}
          </select>
+{/* Play Audio Settings */}
+{action.type === "play_audio" && (
+  <div className="space-y-3 border-t border-gray-700 pt-3">
+    <div className="space-y-1">
+      <label className="block text-xs text-gray-400">
+        Audio Asset
+      </label>
+
+      <select
+        value={action.assetId ?? ""}
+        disabled={busy || audioLoading}
+        onChange={(event) =>
+          void updateAction(
+            behavior,
+            action.id,
+            {
+              assetId: event.target.value || undefined,
+            },
+          )
+        }
+        className="w-full rounded border border-gray-600 bg-transparent px-2 py-2 text-xs"
+      >
+        <option value="">
+          {audioLoading
+            ? "Loading audio..."
+            : "Select audio"}
+        </option>
+
+        {audioAssets.map((asset) => (
+          <option
+            key={asset.id}
+            value={asset.id}
+          >
+            {asset.name}
+          </option>
+        ))}
+      </select>
+
+      {!audioLoading && audioAssets.length === 0 && (
+        <p className="text-xs text-gray-500">
+          No audio assets available. Upload an audio file
+          from Project Assets first.
+        </p>
+      )}
+    </div>
+    {/* Audio Loop Mode */}
+<div className="space-y-1">
+  <label className="block text-xs text-gray-400">
+    Audio Loop Mode
+  </label>
+
+  <select
+    value={action.audioLoopMode ?? "once"}
+    disabled={busy}
+    onChange={(event) =>
+      void updateAction(
+        behavior,
+        action.id,
+        {
+          audioLoopMode: event.target.value as "once" | "loop",
+          ...(event.target.value === "loop"
+            ? { waitUntilComplete: false }
+            : {}),
+        },
+      )
+    }
+    className="w-full rounded border border-gray-600 bg-transparent px-2 py-2 text-xs"
+  >
+    <option value="once">Play Once</option>
+    <option value="loop">Loop</option>
+  </select>
+</div>
+
+{/* Prevent Overlap — khusus Play Once */}
+{(action.audioLoopMode ?? "once") === "once" && (
+  <div className="space-y-1">
+    <label className="flex items-center gap-2 text-xs text-gray-300">
+      <input
+        type="checkbox"
+        checked={action.preventOverlap ?? false}
+        disabled={busy}
+        onChange={(event) =>
+          void updateAction(
+            behavior,
+            action.id,
+            {
+              preventOverlap: event.target.checked,
+            },
+          )
+        }
+        className="h-4 w-4 accent-blue-500"
+      />
+      Prevent Overlap
+    </label>
+
+    <p className="text-xs text-gray-500">
+      Prevent this audio from playing again while
+      it is already playing.
+    </p>
+  </div>
+)}
+
+  {/* Wait Until Complete */}
+<label className="flex items-center gap-2 text-xs text-gray-300">
+  <input
+    type="checkbox"
+ checked={
+  action.audioLoopMode === "loop"
+    ? false
+    : (action.waitUntilComplete ?? false)
+}
+disabled={busy || action.audioLoopMode === "loop"}
+    onChange={(event) =>
+      void updateAction(
+        behavior,
+        action.id,
+        {
+          waitUntilComplete: event.target.checked,
+        },
+      )
+    }
+    className="h-4 w-4 accent-blue-500"
+  />
+
+  Wait Until Complete
+</label>
+
+<p className="text-xs text-gray-500">
+  Wait for the audio to finish before executing
+  the next action.
+</p>
+  </div>
+  
+)}
+{/* Target Object untuk Show / Hide */}
+{(action.type === "show_object" ||
+  action.type === "hide_object") && (
+  <div className="space-y-3 border-t border-gray-700 pt-3">
+    <div className="space-y-1">
+      <label className="block text-xs text-gray-400">
+        Target Object
+      </label>
+
+      <select
+        value={action.targetObjectId ?? objectId}
+        disabled={busy}
+        onChange={(event) =>
+          void updateAction(
+            behavior,
+            action.id,
+            {
+              targetObjectId: event.target.value,
+            },
+          )
+        }
+        className="w-full rounded border border-gray-600 bg-transparent px-2 py-2 text-xs"
+      >
+        {objects.map((object) => (
+          <option
+            key={object.id}
+            value={object.id}
+          >
+            {object.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  </div>
+)}
 
       {action.type === "play_animation" && (
         <div className="space-y-3 border-t border-gray-700 pt-3">

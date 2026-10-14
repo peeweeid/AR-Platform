@@ -210,10 +210,10 @@ const [objects, setObjects] = useState<SceneObject[]>([]);
 const [sceneBehaviors, setSceneBehaviors] =
   useState<SceneBehavior[]>([]);
 
-  const [previewAnimationCommand, setPreviewAnimationCommand] =
+const [previewActionBatch, setPreviewActionBatch] =
   useState<{
     id: number;
-    action: SceneBehavior["actions"][number];
+    actions: SceneBehavior["actions"];
   } | null>(null);
 
 const previewCommandCounterRef = useRef(0);
@@ -784,26 +784,33 @@ function handlePreviewObjectTap(objectId: string) {
     matchingBehaviors,
   );
 
- for (const behavior of matchingBehaviors) {
+ const actionsToExecute: SceneBehavior["actions"] = [];
+
+for (const behavior of matchingBehaviors) {
   console.log(
     "PLAY PREVIEW — BEHAVIOR FOUND:",
     behavior.name,
     behavior.actions,
   );
 
-  for (const action of behavior.actions) {
-    if (action.type !== "play_animation") {
-      continue;
-    }
-
-    previewCommandCounterRef.current += 1;
-
-    setPreviewAnimationCommand({
-      id: previewCommandCounterRef.current,
-      action,
-    });
-  }
+  actionsToExecute.push(...behavior.actions);
 }
+
+if (actionsToExecute.length === 0) {
+  return;
+}
+
+previewCommandCounterRef.current += 1;
+
+setPreviewActionBatch({
+  id: previewCommandCounterRef.current,
+  actions: actionsToExecute,
+});
+
+console.log(
+  "PLAY PREVIEW — ACTION BATCH CREATED:",
+  actionsToExecute,
+);
 }
   return (
     <div className="min-h-[calc(100vh-2rem)]">
@@ -1165,13 +1172,14 @@ function handlePreviewObjectTap(objectId: string) {
 
 <SceneViewport
   objects={objects}
-    isPlayPreview={isPlayPreview}
+  isPlayPreview={isPlayPreview}
   selectedObjectId={selectedObjectId}
   objectModelUrls={objectModelUrls}
   position={selectedObject ? position : undefined}
   rotation={selectedObject ? rotation : undefined}
-  previewAnimationCommand={previewAnimationCommand}
+ previewActionBatch={previewActionBatch}
   scale={selectedObject ? scale : undefined}
+  projectId={scene.project_id}
   onAnimationNamesChange={(objectId, names) => {
   setObjectAnimationNames((previous) => ({
     ...previous,
@@ -1888,14 +1896,15 @@ onChange={(event) => {
                   </div>
 
                   {/* Behavior Inspector */}
-            <BehaviorInspector
-              key={selectedObject.id}
-              sceneId={scene.id}
-              objectId={selectedObject.id}
-              objects={objects}
-              objectAnimationNames={objectAnimationNames}
-              objectAnimationMetadata={objectAnimationMetadata}
-            />
+                  <BehaviorInspector
+                  key={selectedObject.id}
+                  projectId={scene.project_id}
+                  sceneId={scene.id}
+                  objectId={selectedObject.id}
+                  objects={objects}
+                  objectAnimationNames={objectAnimationNames}
+                  objectAnimationMetadata={objectAnimationMetadata}
+                />
             </>
           )}
         </div>

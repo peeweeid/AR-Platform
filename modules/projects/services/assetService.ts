@@ -28,17 +28,39 @@ export async function uploadAsset(
   const supabase = createClient();
 
   const fileExtension =
-    file.name.split(".").pop()?.toLowerCase() ?? "glb";
+    file.name.split(".").pop()?.toLowerCase() ?? "";
 
-  const fileName = `${crypto.randomUUID()}.${fileExtension}`;
+  // Tentukan jenis asset berdasarkan ekstensi file.
+  let assetType: Asset["asset_type"];
+  let mimeType: string;
+
+  if (fileExtension === "glb") {
+    assetType = "model";
+    mimeType = "model/gltf-binary";
+  } else if (fileExtension === "mp3") {
+    assetType = "audio";
+    mimeType = "audio/mpeg";
+  } else if (fileExtension === "wav") {
+    assetType = "audio";
+    mimeType = "audio/wav";
+  } else if (fileExtension === "ogg") {
+    assetType = "audio";
+    mimeType = "audio/ogg";
+  } else {
+    throw new Error(
+      "Unsupported file type. Allowed: GLB, MP3, WAV, OGG.",
+    );
+  }
+
+  const fileName =
+    `${crypto.randomUUID()}.${fileExtension}`;
 
   const filePath = `${projectId}/${fileName}`;
 
   const { error: uploadError } = await supabase.storage
     .from("assets")
     .upload(filePath, file, {
-      contentType:
-        file.type || "model/gltf-binary",
+      contentType: mimeType,
       upsert: false,
     });
 
@@ -51,16 +73,20 @@ export async function uploadAsset(
     .insert({
       project_id: projectId,
       name: file.name,
-      asset_type: "model",
+      asset_type: assetType,
       file_path: filePath,
       file_size: file.size,
-      mime_type:
-        file.type || "model/gltf-binary",
+      mime_type: mimeType,
     })
     .select()
     .single();
 
   if (error) {
+    // Hapus file dari Storage jika penyimpanan database gagal.
+    await supabase.storage
+      .from("assets")
+      .remove([filePath]);
+
     throw error;
   }
 
