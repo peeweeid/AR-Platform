@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { SceneObject } from "../../types/sceneObject";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { Button } from "@/components/ui/button";
@@ -213,6 +214,21 @@ const previewAudioWaitCancelRefs = useRef<
 
 const [selectedAnimation, setSelectedAnimation] =
   useState<Record<string, string>>({});
+
+  // Show Modal — data modal yang sedang ditampilkan.
+const [previewModal, setPreviewModal] = useState<{
+  title: string;
+  description: string;
+  imageUrl: string | null;
+} | null>(null);
+
+// Penyimpanan variabel sementara selama Play Preview.
+// Contoh: { trashCount: 3, score: 100 }
+const previewVariablesRef = useRef<Record<string, number>>({});
+
+// Menyimpan seluruh objek hasil Spawn selama Play Preview.
+// Objek ini tidak masuk ke Hierarchy permanen.
+const previewSpawnedObjectsRef = useRef<THREE.Object3D[]>([]);
 
 const [isAnimationPlaying, setIsAnimationPlaying] =
   useState<Record<string, boolean>>({});
@@ -832,6 +848,198 @@ if (isPreventOverlapOnce) {
 }
 }
 
+// Membuat instance baru dari objek sumber selama Play Preview.
+function executeSpawnObject(action: BehaviorAction): boolean {
+  const sourceObjectId = action.targetObjectId;
+
+  if (!sourceObjectId) {
+    console.warn(
+      "PLAY PREVIEW — SPAWN TARGET MISSING",
+    );
+    return false;
+  }
+
+  const sourceWrapper = modelRefs.current[sourceObjectId];
+
+  if (!sourceWrapper) {
+    console.warn(
+      "PLAY PREVIEW — SPAWN SOURCE NOT LOADED:",
+      sourceObjectId,
+    );
+    return false;
+  }
+
+  // Clone hierarchy GLB sekaligus skeleton/bone.
+  const spawnedWrapper = cloneSkeleton(sourceWrapper);
+
+  spawnedWrapper.name = `${sourceWrapper.name}_Spawn`;
+
+  // Jangan gunakan sceneObjectId sumber pada instance baru.
+  // Supaya instance tidak dianggap sebagai objek asli CMS.
+  delete spawnedWrapper.userData.sceneObjectId;
+
+  // Pertahankan posisi, rotasi, dan skala dunia objek sumber.
+  sourceWrapper.updateWorldMatrix(true, false);
+
+  sourceWrapper.getWorldPosition(spawnedWrapper.position);
+  sourceWrapper.getWorldQuaternion(spawnedWrapper.quaternion);
+  sourceWrapper.getWorldScale(spawnedWrapper.scale);
+
+  // Spawn langsung di Three.js Scene, bukan Hierarchy CMS.
+  // const scene = sourceWrapper.parent;
+
+  // Kita perlu menemukan root Scene, bukan parent wrapper.
+  let root: THREE.Object3D = sourceWrapper;
+
+  while (root.parent) {
+    root = root.parent;
+  }
+
+  if (!(root instanceof THREE.Scene)) {
+    console.warn(
+      "PLAY PREVIEW — SPAWN SCENE NOT FOUND",
+    );
+    return false;
+  }
+
+  root.add(spawnedWrapper);
+
+  // Daftarkan instance untuk cleanup saat Stop Preview.
+  previewSpawnedObjectsRef.current.push(spawnedWrapper);
+
+  console.log(
+    "PLAY PREVIEW — OBJECT SPAWNED:",
+    spawnedWrapper.name,
+  );
+
+  return true;
+}
+
+// Menjalankan Set Variable selama Play Preview.
+function executeSetVariable(action: BehaviorAction): boolean {
+  const variableName = action.variableName?.trim();
+
+  if (!variableName) {
+    console.warn(
+      "PLAY PREVIEW — VARIABLE NAME MISSING",
+    );
+    return false;
+  }
+
+  const value = action.variableValue ?? 0;
+
+  if (!Number.isFinite(value)) {
+    console.warn(
+      "PLAY PREVIEW — INVALID VARIABLE VALUE:",
+      value,
+    );
+    return false;
+  }
+
+  // Variabel yang belum pernah dibuat dianggap bernilai 0.
+  const currentValue =
+    previewVariablesRef.current[variableName] ?? 0;
+
+  const operation = action.variableOperation ?? "set";
+
+  let nextValue: number;
+
+  switch (operation) {
+    case "set":
+      nextValue = value;
+      break;
+
+    case "add":
+      nextValue = currentValue + value;
+      break;
+
+    case "subtract":
+      nextValue = currentValue - value;
+      break;
+
+    default:
+      console.warn(
+        "PLAY PREVIEW — UNKNOWN VARIABLE OPERATION:",
+        operation,
+      );
+      return false;
+  }
+
+  // Simpan nilai terbaru hanya selama Play Preview.
+  previewVariablesRef.current[variableName] = nextValue;
+
+  console.log(
+    "PLAY PREVIEW — VARIABLE UPDATED:",
+    variableName,
+    currentValue,
+    "→",
+    nextValue,
+    `(${operation} ${value})`,
+  );
+
+  return true;
+}
+
+// Menyiapkan Show Modal untuk Play Preview.
+async function showBehaviorModal(
+  action: BehaviorAction,
+  executionVersion: number,
+): Promise<void> {
+  const title = action.title ?? "";
+  const description = action.description ?? "";
+
+  let imageUrl: string | null = null;
+
+  // Ambil gambar jika Modal Image dipilih.
+  if (action.modalImageAssetId) {
+    try {
+      const assets = await getAssets(projectId);
+
+      // Jangan lanjut jika Preview sudah dihentikan.
+      if (
+        previewExecutionVersionRef.current !== executionVersion
+      ) {
+        return;
+      }
+
+      const imageAsset = assets.find(
+        (asset) =>
+          asset.id === action.modalImageAssetId &&
+          asset.asset_type === "image",
+      );
+
+      if (imageAsset?.file_path) {
+        imageUrl = await getAssetUrl(imageAsset.file_path);
+      } else {
+        console.warn(
+          "PLAY PREVIEW — MODAL IMAGE NOT FOUND:",
+          action.modalImageAssetId,
+        );
+      }
+    } catch (error) {
+      console.error(
+        "PLAY PREVIEW — MODAL IMAGE FAILED:",
+        error,
+      );
+    }
+  }
+
+  // Periksa kembali setelah proses async selesai.
+  if (
+    previewExecutionVersionRef.current !== executionVersion
+  ) {
+    return;
+  }
+
+  setPreviewModal({
+    title,
+    description,
+    imageUrl,
+  });
+
+  console.log("PLAY PREVIEW — MODAL OPENED:", title);
+}
+
 async function executePreviewActions(
   actions: BehaviorAction[],
   executionVersion: number,
@@ -960,6 +1168,18 @@ if (
 
   break;
 }
+
+case "show_modal": {
+  // Modal berjalan tanpa menunggu pengguna menekan Close.
+  void showBehaviorModal(action, executionVersion);
+
+  break;
+}
+
+case "set_variable": {
+  executeSetVariable(action);
+  break;
+}
       default:
         console.log(
           "PLAY PREVIEW — ACTION NOT IMPLEMENTED YET:",
@@ -993,7 +1213,27 @@ function stopSelectedAnimation() {
 }
 
 function stopPreviewAnimations() {
-  previewExecutionVersionRef.current += 1;
+previewExecutionVersionRef.current += 1;
+// Tutup dan bersihkan Show Modal saat Stop Preview.
+setPreviewModal(null);
+// Reset seluruh variabel sementara saat Stop Preview.
+previewVariablesRef.current = {};
+
+console.log(
+  "PLAY PREVIEW — ALL VARIABLES RESET",
+);
+
+// Hapus seluruh instance Spawn dari Three.js Scene.
+for (const spawnedObject of previewSpawnedObjectsRef.current) {
+  spawnedObject.removeFromParent();
+}
+
+// Kosongkan daftar instance Spawn.
+previewSpawnedObjectsRef.current = [];
+
+console.log(
+  "PLAY PREVIEW — ALL SPAWNED OBJECTS REMOVED",
+);
 
   // Batalkan semua Promise Prevent Overlap yang masih aktif.
 for (const cancel of previewOnceAudioCancelRefs.current.values()) {
@@ -1949,13 +2189,66 @@ useEffect(() => {
           Stop
         </Button>
       </div>
-    </>
-  )}
-</div>
-
+      </>
+    )}
   </div>
 
-  
+  {/* Show Modal — Play Preview */}
+  {isPlayPreview && previewModal && (
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={previewModal.title || "Information"}
+        className="flex max-h-full w-full max-w-md flex-col overflow-hidden rounded-xl border border-gray-200 bg-white text-gray-900 shadow-2xl"
+      >
+        {/* Modal Header */}
+        <div className="flex items-start justify-between gap-3 border-b border-gray-200 px-4 py-3">
+          <h3 className="text-base font-semibold">
+            {previewModal.title}
+          </h3>
 
+          <button
+            type="button"
+            onClick={() => setPreviewModal(null)}
+            aria-label="Close modal"
+            className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Modal Content */}
+        <div className="space-y-3 overflow-y-auto p-4">
+          {previewModal.imageUrl && (
+            <img
+              src={previewModal.imageUrl}
+              alt={previewModal.title || "Modal image"}
+              className="max-h-64 w-full rounded-lg object-contain"
+            />
+          )}
+
+          {previewModal.description && (
+            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700">
+              {previewModal.description}
+            </p>
+          )}
+        </div>
+
+        {/* Modal Footer */}
+        <div className="border-t border-gray-200 p-3">
+          <button
+            type="button"
+            onClick={() => setPreviewModal(null)}
+            className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+
+</div>
 );
 }

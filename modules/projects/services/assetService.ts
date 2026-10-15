@@ -43,15 +43,26 @@ export async function uploadAsset(
   } else if (fileExtension === "wav") {
     assetType = "audio";
     mimeType = "audio/wav";
-  } else if (fileExtension === "ogg") {
-    assetType = "audio";
-    mimeType = "audio/ogg";
-  } else {
-    throw new Error(
-      "Unsupported file type. Allowed: GLB, MP3, WAV, OGG.",
-    );
-  }
-
+} else if (fileExtension === "ogg") {
+  assetType = "audio";
+  mimeType = "audio/ogg";
+} else if (
+  fileExtension === "jpg" ||
+  fileExtension === "jpeg"
+) {
+  assetType = "image";
+  mimeType = "image/jpeg";
+} else if (fileExtension === "png") {
+  assetType = "image";
+  mimeType = "image/png";
+} else if (fileExtension === "webp") {
+  assetType = "image";
+  mimeType = "image/webp";
+} else {
+  throw new Error(
+    "Unsupported file type. Allowed: GLB, MP3, WAV, OGG, JPG, JPEG, PNG, WEBP.",
+  );
+}
   const fileName =
     `${crypto.randomUUID()}.${fileExtension}`;
 

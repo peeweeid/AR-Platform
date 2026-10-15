@@ -16,6 +16,10 @@ export type BehaviorActionType =
 
 export type BehaviorLoopMode = "loop" | "once";
 
+export type BehaviorVariableOperation =
+  | "set"
+  | "add"
+  | "subtract";
 // Pengaturan untuk setiap action.
 export interface BehaviorAction {
   id: string;
@@ -37,15 +41,19 @@ export interface BehaviorAction {
   audioLoopMode?: BehaviorLoopMode;
 
   // Cegah Play Once bertumpuk saat audio masih aktif.
-preventOverlap?: boolean;
+  preventOverlap?: boolean;
 
   // Konten modal.
   title?: string;
   description?: string;
 
+  // Gambar opsional untuk Show Modal.
+  modalImageAssetId?: string;
+
   // Variabel.
-  variableName?: string;
-  variableValue?: number;
+variableName?: string;
+variableOperation?: BehaviorVariableOperation;
+variableValue?: number;
 
   // Menunggu action selesai sebelum melanjutkan.
   waitUntilComplete?: boolean;

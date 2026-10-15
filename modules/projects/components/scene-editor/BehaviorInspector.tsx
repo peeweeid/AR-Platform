@@ -32,7 +32,11 @@ const ACTION_OPTIONS: {
   { value: "set_variable", label: "Set Variable" },
   { value: "spawn_object", label: "Spawn Object" },
 ];
-
+const VARIABLE_OPERATION_OPTIONS = [
+  { value: "set", label: "Set (=)" },
+  { value: "add", label: "Add (+)" },
+  { value: "subtract", label: "Subtract (-)" },
+] as const;
 interface BehaviorInspectorProps {
   projectId: string;
   sceneId: string;
@@ -59,6 +63,35 @@ export function BehaviorInspector({
   const [error, setError] = useState<string | null>(null);
 const [audioAssets, setAudioAssets] = useState<Asset[]>([]);
 const [audioLoading, setAudioLoading] = useState(false);
+// Asset gambar untuk Show Modal.
+const [imageAssets, setImageAssets] = useState<Asset[]>([]);
+const [imageLoading, setImageLoading] = useState(false);
+// Draft lokal untuk input Show Modal.
+const [modalDrafts, setModalDrafts] = useState<
+  Record<
+    string,
+    {
+      title: string;
+      description: string;
+      modalImageAssetId?: string;
+    }
+  >
+>({});
+
+// Draft konfigurasi Set Variable.
+// Tidak langsung disimpan saat pengguna mengetik.
+const [variableDrafts, setVariableDrafts] = useState<
+  Record<
+    string,
+    {
+      name: string;
+      value: string;
+    }
+  >
+>({});
+
+// Timer autosave Show Modal.
+
 useEffect(() => {
   let cancelled = false;
 
@@ -97,6 +130,46 @@ useEffect(() => {
     cancelled = true;
   };
 }, [projectId]);
+
+useEffect(() => {
+  let cancelled = false;
+
+  async function loadImageAssets() {
+    setImageLoading(true);
+    setImageAssets([]);
+
+    try {
+      const assets = await getAssets(projectId);
+
+      if (!cancelled) {
+        setImageAssets(
+          assets.filter(
+            (asset) => asset.asset_type === "image",
+          ),
+        );
+      }
+    } catch (err) {
+      if (!cancelled) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load image assets.",
+        );
+      }
+    } finally {
+      if (!cancelled) {
+        setImageLoading(false);
+      }
+    }
+  }
+
+  void loadImageAssets();
+
+  return () => {
+    cancelled = true;
+  };
+}, [projectId]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -677,6 +750,297 @@ disabled={busy || action.audioLoopMode === "loop"}
   </div>
   
 )}
+{/* Show Modal Settings */}
+{action.type === "show_modal" && (
+  <div className="space-y-3 border-t border-gray-700 pt-3">
+
+    {/* Modal Title */}
+    <div className="space-y-1">
+      <label className="block text-xs text-gray-400">
+        Modal Title
+      </label>
+
+     <input
+  type="text"
+  value={
+    modalDrafts[action.id]?.title ??
+    action.title ??
+    ""
+  }
+  placeholder="Enter modal title"
+  onChange={(event) => {
+    const value = event.target.value;
+
+  setModalDrafts((previous) => ({
+    ...previous,
+    [action.id]: {
+      title: value,
+      description:
+        previous[action.id]?.description ??
+        action.description ??
+        "",
+      modalImageAssetId:
+        previous[action.id]?.modalImageAssetId ??
+        action.modalImageAssetId,
+    },
+    }));
+    }}
+  className="w-full rounded border border-gray-600 bg-transparent px-2 py-2 text-xs"
+/>
+    </div>
+
+    {/* Modal Description */}
+    <div className="space-y-1">
+      <label className="block text-xs text-gray-400">
+        Description
+      </label>
+
+     <textarea
+  value={
+    modalDrafts[action.id]?.description ??
+    action.description ??
+    ""
+  }
+  placeholder="Enter modal description..."
+  rows={4}
+  onChange={(event) => {
+    const value = event.target.value;
+
+  setModalDrafts((previous) => ({
+  ...previous,
+  [action.id]: {
+    title:
+      previous[action.id]?.title ??
+      action.title ??
+      "",
+    description: value,
+    modalImageAssetId:
+      previous[action.id]?.modalImageAssetId ??
+      action.modalImageAssetId,
+  },
+}));
+  }}
+  className="w-full resize-y rounded border border-gray-600 bg-transparent px-2 py-2 text-xs"
+/>
+    </div>
+
+    {/* Modal Image */}
+<div className="space-y-1">
+  <label className="block text-xs text-gray-400">
+    Modal Image (Optional)
+  </label>
+
+  <select
+    value={
+      modalDrafts[action.id]?.modalImageAssetId ??
+      action.modalImageAssetId ??
+      ""
+    }
+    disabled={busy || imageLoading}
+    onChange={(event) => {
+      const imageId = event.target.value;
+
+      setModalDrafts((previous) => ({
+        ...previous,
+        [action.id]: {
+          title:
+            previous[action.id]?.title ??
+            action.title ??
+            "",
+          description:
+            previous[action.id]?.description ??
+            action.description ??
+            "",
+          modalImageAssetId: imageId,
+        },
+      }));
+    }}
+    className="w-full rounded border border-gray-600 bg-transparent px-2 py-2 text-xs"
+  >
+    <option value="">
+      {imageLoading ? "Loading images..." : "No Image"}
+    </option>
+
+    {imageAssets.map((asset) => (
+      <option key={asset.id} value={asset.id}>
+        {asset.name}
+      </option>
+    ))}
+  </select>
+
+  {!imageLoading && imageAssets.length === 0 && (
+    <p className="text-xs text-gray-500">
+      No image assets available. Upload an image
+      from Project Assets first.
+    </p>
+  )}
+</div>
+
+    {/* Save Modal */}
+    <button
+      type="button"
+      disabled={busy || !modalDrafts[action.id]}
+      onClick={async () => {
+        const draft = modalDrafts[action.id];
+
+        if (!draft) return;
+
+      await updateAction(
+  behavior,
+  action.id,
+  {
+    title: draft.title,
+    description: draft.description,
+    modalImageAssetId:
+      draft.modalImageAssetId || undefined,
+  },
+);
+      }}
+      className="w-full rounded bg-blue-600 px-3 py-2 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {busy ? "Saving..." : "Save Modal"}
+    </button>
+
+  </div>
+)}
+
+{action.type === "set_variable" && (
+  <div className="space-y-2 rounded-md border p-3">
+    <label className="block space-y-1">
+      <span className="text-xs font-medium">
+        Operation
+      </span>
+
+      <select
+        className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+        value={action.variableOperation ?? "set"}
+        disabled={busy}
+        onChange={(event) => {
+          void updateAction(behavior, action.id, {
+            variableOperation: event.target.value as
+              | "set"
+              | "add"
+              | "subtract",
+          });
+        }}
+      >
+        {VARIABLE_OPERATION_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  </div>
+)}
+
+{/* Variable Name */}
+<label className="block space-y-1">
+  <span className="text-xs font-medium">
+    Variable Name
+  </span>
+
+  <input
+    type="text"
+    placeholder="Contoh: trashCount"
+    className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+    disabled={busy}
+    value={
+      variableDrafts[action.id]?.name ??
+      action.variableName ??
+      ""
+    }
+    onChange={(event) => {
+      const name = event.target.value;
+
+      setVariableDrafts((previous) => ({
+        ...previous,
+        [action.id]: {
+          name,
+          value:
+            previous[action.id]?.value ??
+            String(action.variableValue ?? 0),
+        },
+      }));
+    }}
+  />
+</label>
+
+{/* Variable Value */}
+<label className="block space-y-1">
+  <span className="text-xs font-medium">
+    Value
+  </span>
+
+  <input
+    type="number"
+    step="any"
+    placeholder="Contoh: 1"
+    className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+    disabled={busy}
+    value={
+      variableDrafts[action.id]?.value ??
+      String(action.variableValue ?? 0)
+    }
+    onChange={(event) => {
+      const value = event.target.value;
+
+      setVariableDrafts((previous) => ({
+        ...previous,
+        [action.id]: {
+          name:
+            previous[action.id]?.name ??
+            action.variableName ??
+            "",
+          value,
+        },
+      }));
+    }}
+  />
+</label>
+
+{/* Save Variable */}
+<button
+  type="button"
+  disabled={busy}
+  className="w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+  onClick={async () => {
+    const draft = variableDrafts[action.id];
+
+    const name = (
+      draft?.name ??
+      action.variableName ??
+      ""
+    ).trim();
+
+    const valueText =
+      draft?.value ??
+      String(action.variableValue ?? 0);
+
+    const value = Number(valueText);
+
+    if (!name) {
+      alert("Variable Name tidak boleh kosong.");
+      return;
+    }
+
+    if (
+      valueText.trim() === "" ||
+      !Number.isFinite(value)
+    ) {
+      alert("Variable Value harus berupa angka yang valid.");
+      return;
+    }
+
+    await updateAction(behavior, action.id, {
+      variableName: name,
+      variableValue: value,
+    });
+  }}
+>
+  Save Variable
+</button>
+
 {/* Target Object untuk Show / Hide */}
 {(action.type === "show_object" ||
   action.type === "hide_object") && (

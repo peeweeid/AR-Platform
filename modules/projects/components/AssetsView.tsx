@@ -75,7 +75,7 @@ export function AssetsView({
         <div className="flex items-center gap-3">
           <input
             type="file"
-            accept=".glb,.gltf,.mp3,.wav,.ogg"
+            accept=".glb,.gltf,.mp3,.wav,.ogg , .jpg , .jpeg , .png"
             onChange={(event) =>
               setFile(
                 event.target.files?.[0] ?? null,
